@@ -1,16 +1,13 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 
-use cosmwasm_std::{
-    from_binary, to_binary, Addr, Api, Binary, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
-    QueryRequest, Response, StdError, StdResult, Uint128, WasmMsg, WasmQuery,
-};
+use cosmwasm_std::{from_binary, to_binary, Addr, Api, Binary, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo, QueryRequest, Response, StdError, StdResult, Uint128, WasmMsg, WasmQuery, BankMsg};
 
 use crate::operations::execute_swap_operation;
 use crate::querier::compute_tax;
 use crate::state::{Config, CONFIG};
 
-use cw20::Cw20ReceiveMsg;
+use cw20::{Cw20ReceiveMsg, Cw20ExecuteMsg};
 use std::collections::HashMap;
 use terra_cosmwasm::{SwapResponse, TerraMsgWrapper, TerraQuerier};
 use terraswap::asset::{Asset, AssetInfo, PairInfo};
@@ -84,7 +81,99 @@ pub fn execute(
             minimum_receive,
             deps.api.addr_validate(&receiver)?,
         ),
+        ExecuteMsg::ExecuteTeleport {
+            operations,
+            minimum_receive,
+            ref_address,
+            ref_fee_pct,
+            to,
+        } => execute_teleport_operations(
+            deps,
+            env,
+            info.sender,
+            operations,
+            minimum_receive,
+            optional_addr_validate(api, to)?,
+            ref_address,
+            ref_fee_pct,
+        ),
+        ExecuteMsg::ExecuteSendOrBridgeFromSelfWithFee {
+            asset_info,
+            prev_balance,
+            receiver,
+            ref_fee_pct,
+            ref_address,
+            memo
+        } => execute_send_from_self_with_fee(deps,
+                                             env,
+                                             asset_info,
+                                             prev_balance,
+                                             receiver,
+                                             ref_fee_pct,
+                                             ref_address,
+                                             memo)
     }
+}
+
+fn execute_send_from_self_with_fee(
+    deps: DepsMut,
+    env: Env,
+    asset_info: AssetInfo,
+    prev_balance: Uint128,
+    receiver: String,
+    ref_fee_pct: Option<Uint128>,
+    ref_address: Option<String>,
+    memo: Option<String>) -> StdResult<Response<TerraMsgWrapper>> {
+    let referral_is_active = check_referral_params_valid(&ref_fee, &ref_address)?;
+
+    let self_balance = asset_info.query_pool(&deps.querier, deps.api, env.contract.address.clone())?;
+    let token_amount_before_fee = (self_balance - prev_balance);
+
+    // receiver_amount = token_amount_before_fee * (1- referral)
+    let mut receiver_amount = token_amount_before_fee.clone();
+    let mut fee_amount = Uint128::zero();
+
+    if referral_is_active && ref_fee_pct.is_some() && ref_fee_pct.unwrap() > 0 {
+        receiver_amount = token_amount_before_fee.multiply_ratio(ref_fee_pct, 100);
+        fee_amount = (token_amount_before_fee - receiver_amount);
+    }
+
+    let asset_to_receiver = Asset {
+        info: asset_info.clone(),
+        amount: receiver_amount,
+    };
+
+    let send_asset_to_receiver_msg: CosmosMsg = create_transfer_msg(&asset_to_receiver, receiver.clone())?;
+
+    let mut messages: Vec<CosmosMsg> = vec![send_asset_to_receiver_msg];
+
+    if fee_amount > 0 {
+        let asset_to_referrer = Asset {
+            info: asset_info.clone(),
+            amount: fee_amount,
+        };
+        let send_asset_to_referrer_msg: CosmosMsg = create_transfer_msg(&asset_to_referrer, receiver.clone())?;
+        messages.push(send_asset_to_referrer_msg);
+    }
+
+    return Ok(Response::new().add_messages(messages));
+}
+
+fn create_transfer_msg(
+    asset: &Asset,
+    recipient: String,
+) -> StdResult<CosmosMsg> {
+    return match asset.info {
+        AssetInfo::Token { contract_addr } => Ok(WasmMsg::Execute {
+            contract_addr: contract_addr.clone(),
+            msg: to_binary(&Cw20ExecuteMsg::Transfer { recipient: receiver, amount: asset.amount })?,
+            funds: vec![],
+        }.into()),
+        AssetInfo::NativeToken { .. } => Ok(BankMsg::Send {
+            to_address: recipient,
+            amount: vec![asset_to_receiver.deduct_tax(&deps.querier)?],
+        }.into()),
+    };
 }
 
 fn optional_addr_validate(api: &dyn Api, addr: Option<String>) -> StdResult<Option<Addr>> {
@@ -119,7 +208,25 @@ pub fn receive_cw20(
                 minimum_receive,
                 optional_addr_validate(api, to)?,
             )
-        }
+        },
+        Cw20HookMsg::ExecuteTeleport {
+            operations,
+            minimum_receive,
+            ref_address,
+            ref_fee_pct,
+            to,
+        }=>{
+            execute_teleport_operations(
+                deps,
+                env,
+                info.sender,
+                operations,
+                minimum_receive,
+                optional_addr_validate(api, to)?,
+                ref_address,
+                ref_fee_pct,
+            )
+        },
     }
 }
 
@@ -180,6 +287,179 @@ pub fn execute_swap_operations(
 
     Ok(Response::new().add_messages(messages))
 }
+
+pub fn execute_teleport_operations(
+    deps: DepsMut,
+    env: Env,
+    sender: Addr,
+    operations: Vec<SwapOperation>,
+    minimum_receive: Option<Uint128>,
+    to: Option<Addr>,
+    ref_address: Option<String>,
+    ref_fee_pct: Option<Uint128>,
+) -> StdResult<Response<TerraMsgWrapper>> {
+    let operations_len = operations.len();
+    if operations_len == 0 {
+        return Err(StdError::generic_err("must provide operations"));
+    }
+
+    // Assert the operations are properly set
+    let swaps: Vec<SwapOperation> = operations.iter().filter(
+        |o| match o {
+            SwapOperation::NativeSwap { .. } => true,
+            SwapOperation::TerraSwap { .. } => true,
+            _ => false
+        }
+    ).collect();
+    // assert_operations(&operations)?;
+    assert_operations(&swaps)?;
+
+    let referral_is_active = check_referral_params_valid(&ref_pct, &ref_address)?;
+    let bridge_operation: Option<&SwapOperation> = check_for_valid_bridge_operation(&operations, deps.api)?;
+    let have_valid_bridge_operation = bridge_operation.is_some();
+
+    let to = if let Some(to) = to { to } else { sender };
+    let target_asset_info = swaps.last().unwrap().get_target_asset_info();
+
+    let mut messages: Vec<CosmosMsg<TerraMsgWrapper>> = vec![];
+
+    let mut operation_index = 0;
+    swaps_len = swaps.len();
+    let mut swap_messages: Vec<CosmosMsg<TerraMsgWrapper>> = swaps
+        .into_iter()
+        .map(|op| {
+            operation_index += 1;
+            Ok(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: env.contract.address.to_string(),
+                funds: vec![],
+                msg: to_binary(&ExecuteMsg::ExecuteSwapOperation {
+                    operation: op,
+                    to: if operation_index == swaps_len {
+                        if referral_is_active == true || have_valid_bridge_operation == true {
+                            None // for sending referral or bridge, we should keep the output in contract
+                        } else {
+                            Some(to.to_string())
+                        }
+                    } else {
+                        None
+                    },
+                })?,
+            }))
+        })
+        .collect::<StdResult<Vec<CosmosMsg<TerraMsgWrapper>>>>()?;
+    messages.append(&mut swap_messages);
+
+    // check for Terra Bridge operation
+    let (wallet_address_on_target_chain, bridge_contract_address_on_terra) = match bridge_operation {
+        None => (None, None),
+        Some(SwapOperation::TerraBridge {
+                 bridge_contract_address,
+                 wallet_address_on_target_chain,
+                 ..
+             }
+        ) =>
+            (Some(bridge_contract_address.clone()), Some(wallet_address_on_target_chain.clone())),
+        _ => return Err(StdError::generic_err(
+            format!("unsupported bridge operation! operation is {:?}", bridge_operation)))
+    };
+
+    // when we bridge, the receiving address is the bridge contract.
+    let final_receiving_address = if have_valid_bridge_operation
+    { bridge_contract_address_on_terra.unwrap() } else { to.to_string() };
+
+    if referral_is_active == true || have_valid_bridge_operation == true {
+        // if referral is active, we have kept the coins in contract, should send them from this contract
+        let self_balance = target_asset_info.query_pool(&deps.querier, deps.api, env.contract.address.clone())?;
+        messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: env.contract.address.to_string(),
+            funds: vec![],
+            msg: to_binary(&ExecuteMsg::ExecuteSendOrBridgeFromSelfWithFee {
+                asset_info: target_asset_info.clone(),
+                prev_balance: self_balance,
+                receiver: final_receiving_address.clone(),
+                ref_fee_pct: ref_fee_pct,
+                ref_address: ref_address,
+                memo: wallet_address_on_target_chain, // memo is for terra bridges.
+            })?,
+        }))
+    }
+
+    // Execute minimum amount assertion
+    if let Some(minimum_receive) = minimum_receive {
+        let receiver_balance = target_asset_info.query_pool(&deps.querier, deps.api, to.clone())?;
+
+        messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: env.contract.address.to_string(),
+            funds: vec![],
+            msg: to_binary(&ExecuteMsg::AssertMinimumReceive {
+                asset_info: target_asset_info,
+                prev_balance: receiver_balance,
+                minimum_receive,
+                receiver: final_receiving_address.clone(),
+            })?,
+        }))
+    }
+
+    Ok(Response::new().add_messages(messages))
+}
+
+
+static REFERRAL_PCT_MAX: u128 = 10; // set maximum referral amount
+
+fn check_referral_params_valid(ref_fee_pct: &Option<Uint128>,
+                               ref_address: &Option<String>) -> StdResult<bool> {
+    // todo: maybe check if for very small swpas, chargin a referral causes a fail because of tax;
+    // todo: maybe get maximum tax cap and then check if charging a tax fails the tx?;
+    let mut referral_is_valid: bool = false;
+    if let Some(ref_fee_pct) = ref_fee_pct {
+        if let Some(ref_address) = ref_address {
+            if ref_address.is_empty() == false {
+                if ref_fee_pct > REFERRAL_PCT_MAX.into() { // todo: double check this
+                    return Err(StdError::generic_err(
+                        format!("referral fee should be less than {} percent, but received: {:?}",
+                                REFERRAL_PCT_MAX, ref_fee_pct)));
+                }
+                referral_is_valid = true;
+            }
+        }
+    }
+    Ok(referral_is_valid)
+}
+
+fn check_for_valid_bridge_operation(operations: &Vec<SwapOperation>, api: &dyn Api) -> StdResult<Option<&SwapOperation>> {
+    let bridge_operations: Vec<SwapOperation> = operations.iter()
+        .filter(|o| matches!(o,SwapOperation::TerraBridge )).collect();
+    // todo: check that we only have one bridge of any types of terra bridge, wormhole and IBC
+    if bridge_operations.len() > 1 {
+        return Err(StdError::generic_err(
+            format!("only one bridge operation is allowed at max but given {}", bridge_operations.len())));
+    }
+    if bridge_operations.len() == 0 {
+        return Ok(None);
+    }
+    let bridge_operation = bridge_operations.first().unwrap();
+    match bridge_operation {
+        // api.addr_validate(bridge_operation.)
+        SwapOperation::TerraBridge {
+            bridge_contract_address,
+            wallet_address_on_target_chain,
+            ..
+        } => {
+            // validate addresses
+            if !wallet_address_on_target_chain.starts_with("0x") {
+                return Err(StdError::generic_err(
+                    format!("invalid wallet_address_on_target_chain is given {}",
+                            wallet_address_on_target_chain)));
+            }
+            api.addr_validate(bridge_contract_address)?;
+            return Ok(Some(bridge_operation));
+        }
+        // SwapOperation::WormHoleBridge { .. } => {} // todo
+        // SwapOperation::IbcTransfer { .. } => {} // todo
+        _ => return Err(StdError::generic_err("unsupported bridge type"))
+    }
+}
+
 
 fn assert_minium_receive(
     deps: Deps,
@@ -309,6 +589,9 @@ fn simulate_swap_operations(
 
                 offer_amount = res.return_amount;
             }
+            SwapOperation::TerraBridge { .. } => {} // todo
+            SwapOperation::WormHoleBridge { .. } => {} // todo
+            SwapOperation::IbcTransfer { .. } => {} // todo
         }
     }
 
@@ -336,6 +619,9 @@ fn assert_operations(operations: &[SwapOperation]) -> StdResult<()> {
                 offer_asset_info,
                 ask_asset_info,
             } => (offer_asset_info.clone(), ask_asset_info.clone()),
+            SwapOperation::TerraBridge { .. } => {} // todo
+            SwapOperation::WormHoleBridge { .. } => {}// todo
+            SwapOperation::IbcTransfer { .. } => {}// todo
         };
 
         ask_asset_map.remove(&offer_asset.to_string());
@@ -377,9 +663,9 @@ fn test_invalid_operations() {
             ask_asset_info: AssetInfo::NativeToken {
                 denom: "uluna".to_string(),
             },
-        }
+        },
     ])
-    .is_ok());
+        .is_ok());
 
     // asset0002 output
     assert!(assert_operations(&vec![
@@ -412,7 +698,7 @@ fn test_invalid_operations() {
             },
         },
     ])
-    .is_ok());
+        .is_ok());
 
     // multiple output token types error
     assert!(assert_operations(&vec![
@@ -445,5 +731,5 @@ fn test_invalid_operations() {
             },
         },
     ])
-    .is_err());
+        .is_err());
 }

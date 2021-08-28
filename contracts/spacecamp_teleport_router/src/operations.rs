@@ -91,6 +91,10 @@ pub fn execute_swap_operation(
                 to,
             )?]
         }
+        // SwapOperation::TerraBridge { .. } => {}
+        // SwapOperation::WormHoleBridge { .. } => {}
+        // SwapOperation::IbcTransfer { .. } => {}
+        _ => return Err(StdError::generic_err("given operation is not implemented"))
     };
 
     Ok(Response::new().add_messages(messages))

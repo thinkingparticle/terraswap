@@ -1,7 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use cosmwasm_std::Uint128;
+use cosmwasm_std::{Uint128};
 use cw20::Cw20ReceiveMsg;
 
 use crate::asset::AssetInfo;
@@ -22,6 +22,29 @@ pub enum SwapOperation {
         offer_asset_info: AssetInfo,
         ask_asset_info: AssetInfo,
     },
+    // todo: maybe take these out from SwapOperation and put them in a BridgeOperation enum
+    TerraBridge {
+        asset_info: AssetInfo,
+        bridge_contract_address: String,
+        wallet_address_on_target_chain: String, //
+    },
+    WormHoleBridge {
+        // to be implemented once wormhole live and connected to terra
+        asset_info: AssetInfo,
+        wallet_address_on_target_chain: String
+    },
+    IbcTransfer {
+        // to be implemented after IBC live on terra
+        asset_info: AssetInfo,
+        channel_id: String,
+        port_id: String,
+        wallet_address_on_target_chain: String,
+        // for transferring cw20 over ibc:
+        // https://github.com/CosmWasm/cw-plus/tree/v0.6.0-beta1/contracts/cw20-ics20
+        ics20_contract_address: Option<String>,
+        revision_number: Uint128,
+        revision_height: Uint128,
+    },
 }
 
 impl SwapOperation {
@@ -31,6 +54,7 @@ impl SwapOperation {
                 denom: ask_denom.clone(),
             },
             SwapOperation::TerraSwap { ask_asset_info, .. } => ask_asset_info.clone(),
+            SwapOperation::Bridge { asset_info, .. } => asset_info.clone()
         }
     }
 }
@@ -60,6 +84,26 @@ pub enum ExecuteMsg {
         minimum_receive: Uint128,
         receiver: String,
     },
+
+    /// Execute multiple swaps and bridges
+    ExecuteTeleport {
+        operations: Vec<SwapOperation>,
+        minimum_receive: Option<Uint128>,
+        ref_address: Option<String>,
+        ref_fee_pct: Option<Uint128>,
+        to: Option<String>,
+    },
+
+    /// Internal use
+    /// Send from contract wallet with charging a fee
+    ExecuteSendOrBridgeFromSelfWithFee {
+        asset_info: AssetInfo,
+        prev_balance: Uint128,
+        receiver: String,
+        ref_fee_pct: Option<Uint128>,
+        ref_address: Option<String>,
+        memo: Option<String>
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -68,6 +112,14 @@ pub enum Cw20HookMsg {
     ExecuteSwapOperations {
         operations: Vec<SwapOperation>,
         minimum_receive: Option<Uint128>,
+        to: Option<String>,
+    },
+    /// Execute multiple swaps and bridges
+    ExecuteTeleport {
+        operations: Vec<SwapOperation>,
+        minimum_receive: Option<Uint128>,
+        ref_address: Option<String>,
+        ref_fee_pct: Option<Uint128>,
         to: Option<String>,
     },
 }

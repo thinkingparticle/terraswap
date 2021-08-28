@@ -84,6 +84,7 @@ pub fn execute(
             minimum_receive,
             deps.api.addr_validate(&receiver)?,
         ),
+        _ => return Err(StdError::generic_err("method not implemented"))
     }
 }
 
@@ -309,6 +310,7 @@ fn simulate_swap_operations(
 
                 offer_amount = res.return_amount;
             }
+            _ => return Err(StdError::generic_err("not implemented"))
         }
     }
 
@@ -336,6 +338,7 @@ fn assert_operations(operations: &[SwapOperation]) -> StdResult<()> {
                 offer_asset_info,
                 ask_asset_info,
             } => (offer_asset_info.clone(), ask_asset_info.clone()),
+            _ => return Err(StdError::generic_err("not implemented"))
         };
 
         ask_asset_map.remove(&offer_asset.to_string());
@@ -377,9 +380,9 @@ fn test_invalid_operations() {
             ask_asset_info: AssetInfo::NativeToken {
                 denom: "uluna".to_string(),
             },
-        }
+        },
     ])
-    .is_ok());
+        .is_ok());
 
     // asset0002 output
     assert!(assert_operations(&vec![
@@ -412,7 +415,7 @@ fn test_invalid_operations() {
             },
         },
     ])
-    .is_ok());
+        .is_ok());
 
     // multiple output token types error
     assert!(assert_operations(&vec![
@@ -445,5 +448,5 @@ fn test_invalid_operations() {
             },
         },
     ])
-    .is_err());
+        .is_err());
 }
