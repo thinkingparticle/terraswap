@@ -1,14 +1,10 @@
-use cosmwasm_std::{
-    from_binary, to_binary, Api, Binary, Coin, CosmosMsg, Env, Extern, HandleResponse,
-    HandleResult, HumanAddr, InitResponse, InitResult, MigrateResponse, MigrateResult, Querier,
-    QueryRequest, StdError, StdResult, Storage, Uint128, WasmMsg, WasmQuery,
-};
+use cosmwasm_std::{from_binary, to_binary, Api, Binary, Coin, CosmosMsg, Env, Extern, HandleResponse, HandleResult, HumanAddr, InitResponse, InitResult, MigrateResponse, MigrateResult, Querier, QueryRequest, StdError, StdResult, Storage, Uint128, WasmMsg, WasmQuery, BankMsg};
 
 use crate::operations::execute_swap_operation;
 use crate::querier::compute_tax;
 use crate::state::{read_config, store_config, Config};
 
-use cw20::Cw20ReceiveMsg;
+use cw20::{Cw20ReceiveMsg, Cw20HandleMsg};
 use std::collections::HashMap;
 use terra_cosmwasm::{SwapResponse, TerraMsgWrapper, TerraQuerier};
 use terraswap::asset::{Asset, AssetInfo, PairInfo};
@@ -62,6 +58,37 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             minimum_receive,
             receiver,
         } => assert_minium_receive(deps, asset_info, prev_balance, minimum_receive, receiver),
+        HandleMsg::ExecuteTeleport {
+            operations,
+            minimum_receive,
+            ref_address,
+            ref_fee_pct,
+            to,
+        } => execute_teleport_operations(
+            deps,
+            env.clone(),
+            env.message.sender,
+            operations,
+            minimum_receive,
+            to,
+            ref_fee_pct,
+            ref_address,
+        ),
+        HandleMsg::ExecuteSendFromSelfWithFee {
+            asset_info,
+            prev_balance,
+            receiver,
+            ref_fee_pct,
+            ref_address
+        } => execute_send_from_self_with_fee(
+            deps,
+            env.clone(),
+            asset_info,
+            prev_balance,
+            receiver,
+            ref_fee_pct,
+            ref_address,
+        ),
     }
 }
 
@@ -79,11 +106,223 @@ pub fn receive_cw20<S: Storage, A: Api, Q: Querier>(
             } => {
                 execute_swap_operations(deps, env, cw20_msg.sender, operations, minimum_receive, to)
             }
+            Cw20HookMsg::ExecuteTeleport {
+                operations,
+                minimum_receive,
+                ref_address,
+                ref_fee_pct,
+                to
+            } => {
+                execute_teleport_operations(
+                    deps,
+                    env.clone(),
+                    env.message.sender,
+                    operations,
+                    minimum_receive,
+                    to,
+                    ref_fee_pct,
+                    ref_address,
+                )
+            }
         }
     } else {
         Err(StdError::generic_err("data should be given"))
     }
 }
+
+pub fn execute_teleport_operations<S: Storage, A: Api, Q: Querier>(
+    deps: &mut Extern<S, A, Q>,
+    env: Env,
+    sender: HumanAddr,
+    operations: Vec<SwapOperation>,
+    minimum_receive: Option<Uint128>,
+    to: Option<HumanAddr>,
+    ref_fee_pct: Option<Uint128>,
+    ref_address: Option<HumanAddr>,
+) -> HandleResult<TerraMsgWrapper> {
+    let operations_len = operations.len();
+    if operations_len == 0 {
+        return Err(StdError::generic_err("must provide operations"));
+    }
+
+    // Assert the operations are properly set
+    assert_operations(&operations)?;
+
+    let referral_is_active = check_referral_params_valid(&ref_fee_pct, &ref_address)?;
+
+    let to = if let Some(to) = to { to } else { sender };
+    let target_asset_info = operations.last().unwrap().get_target_asset_info();
+
+    let mut operation_index = 0;
+    let mut messages: Vec<CosmosMsg<TerraMsgWrapper>> = operations
+        .into_iter()
+        .map(|op| {
+            operation_index += 1;
+            Ok(CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr: env.contract.address.clone(),
+                send: vec![],
+                msg: to_binary(&HandleMsg::ExecuteSwapOperation {
+                    operation: op,
+                    to: if operation_index == operations_len {
+                        if referral_is_active == true {
+                            None
+                        } else {
+                            Some(to.clone())
+                        }
+                    } else {
+                        None
+                    },
+                })?,
+            }))
+        })
+        .collect::<StdResult<Vec<CosmosMsg<TerraMsgWrapper>>>>()?;
+
+    // send referral fee to user
+    if referral_is_active == true {
+        let self_balance = target_asset_info.query_pool(&deps, &env.contract.address)?;
+        messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: env.contract.address.clone(),
+            send: vec![],
+            msg: to_binary(&HandleMsg::ExecuteSendFromSelfWithFee {
+                asset_info: target_asset_info.clone(),
+                prev_balance: self_balance,
+                receiver: to.clone(),
+                ref_fee_pct: ref_fee_pct,
+                ref_address: ref_address,
+            })?,
+        }))
+    }
+
+    // Execute minimum amount assertion
+    if let Some(minimum_receive) = minimum_receive {
+        let receiver_balance = target_asset_info.query_pool(&deps, &to)?;
+        messages.push(CosmosMsg::Wasm(WasmMsg::Execute {
+            contract_addr: env.contract.address,
+            send: vec![],
+            msg: to_binary(&HandleMsg::AssertMinimumReceive {
+                asset_info: target_asset_info,
+                prev_balance: receiver_balance,
+                minimum_receive,
+                receiver: to,
+            })?,
+        }))
+    }
+
+    Ok(HandleResponse {
+        messages,
+        log: vec![],
+        data: None,
+    })
+}
+
+
+static REFERRAL_PCT_MAX: u128 = 10; // set maximum referral amount
+
+fn check_referral_params_valid(ref_fee_pct: &Option<Uint128>,
+                               ref_address: &Option<HumanAddr>) -> StdResult<bool> {
+    // todo: maybe check if for very small swpas, chargin a referral causes a fail because of tax;
+    // todo: maybe get maximum tax cap and then check if charging a tax fails the tx?;
+    let mut referral_is_valid: bool = false;
+    // let ref_fee = ref_fee.unwrap();//todo: check this
+    if let Some(ref_fee) = ref_fee_pct {
+        if let Some(ref_address) = ref_address {
+            if ref_address.is_empty() == false {
+                if ref_fee.0 > REFERRAL_PCT_MAX {
+                    return Err(StdError::generic_err(
+                        format!("referral fee should be less than {} but received: {}",
+                                REFERRAL_PCT_MAX, ref_fee)));
+                }
+                referral_is_valid = true;
+            }
+        }
+    }
+    Ok(referral_is_valid)
+}
+
+fn execute_send_from_self_with_fee<S: Storage, A: Api, Q: Querier>(
+    deps: &Extern<S, A, Q>,
+    env: Env,
+    asset_info: AssetInfo,
+    prev_balance: Uint128,
+    receiver: HumanAddr,
+    ref_fee_pct: Option<Uint128>,
+    ref_address: Option<HumanAddr>,
+) -> StdResult<HandleResponse<TerraMsgWrapper>> {
+    let fee_nominator = ref_fee_pct.unwrap_or(Uint128::zero());
+
+    let referral_is_active = check_referral_params_valid(&ref_fee_pct, &ref_address)?;
+
+    let self_balance = asset_info.query_pool(&deps, &env.contract.address)?;
+
+    let token_amount_before_fee = (self_balance - prev_balance)?;
+
+    let mut receiver_amount = token_amount_before_fee.clone();
+    let mut fee_amount = Uint128::zero();
+    if fee_nominator.is_zero() == false && referral_is_active == true {
+        receiver_amount = token_amount_before_fee.multiply_ratio(100u128 - fee_nominator.0, 100u128);
+        fee_amount = (token_amount_before_fee - receiver_amount).unwrap_or(Uint128::zero());
+        if fee_amount.is_zero() { // if error happened when computing fee or fee is zero
+            receiver_amount = token_amount_before_fee
+        }
+    }
+
+    let asset_to_receiver = Asset {
+        info: asset_info.clone(),
+        amount: receiver_amount,
+    };
+
+    let send_asset_to_receiver_msg = into_cosmos_terramsgwrapper_custom(
+        &asset_to_receiver, &deps, env.contract.address.clone(), receiver)?;
+
+
+    let mut messages = vec![
+        send_asset_to_receiver_msg
+    ];
+
+    if fee_amount.is_zero() == false {
+        let asset_to_referrer = Asset {
+            info: asset_info.clone(),
+            amount: fee_amount,
+        };
+        let send_asset_to_referrer = into_cosmos_terramsgwrapper_custom(
+            &asset_to_referrer, &deps, env.contract.address.clone(), ref_address.unwrap())?;
+        messages.push(send_asset_to_referrer);
+        // messages.push(asset_to_referrer.into_msg(&deps,
+        //                                          env.contract.address.clone(),
+        //                                          ref_address?)?
+        // );
+    }
+
+    Ok(HandleResponse {
+        messages,
+        log: vec![],
+        data: None,
+    })
+}
+
+
+fn into_cosmos_terramsgwrapper_custom<S: Storage, A: Api, Q: Querier>(
+    asset: &Asset,
+    deps: &Extern<S, A, Q>,
+    sender: HumanAddr,
+    recipient: HumanAddr,
+) -> StdResult<CosmosMsg<TerraMsgWrapper>> {
+    let amount = asset.amount;
+
+    match &asset.info {
+        AssetInfo::Token { contract_addr } => Ok(WasmMsg::Execute {
+            contract_addr: contract_addr.clone(),
+            msg: to_binary(&Cw20HandleMsg::Transfer { recipient, amount })?,
+            send: vec![],
+        }.into()),
+        AssetInfo::NativeToken { .. } => Ok(BankMsg::Send {
+            from_address: sender,
+            to_address: recipient,
+            amount: vec![asset.deduct_tax(deps)?],
+        }.into()),
+    }
+}
+
 
 pub fn execute_swap_operations<S: Storage, A: Api, Q: Querier>(
     deps: &mut Extern<S, A, Q>,
@@ -349,9 +588,9 @@ fn test_invalid_operations() {
                 ask_asset_info: AssetInfo::NativeToken {
                     denom: "uluna".to_string(),
                 },
-            }
+            },
         ])
-        .is_ok()
+            .is_ok()
     );
 
     // asset0002 output
@@ -387,7 +626,7 @@ fn test_invalid_operations() {
                 },
             },
         ])
-        .is_ok()
+            .is_ok()
     );
 
     // multiple output token types error
@@ -423,6 +662,6 @@ fn test_invalid_operations() {
                 },
             },
         ])
-        .is_err()
+            .is_err()
     );
 }

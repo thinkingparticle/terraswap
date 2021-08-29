@@ -62,6 +62,7 @@ pub fn handle<S: Storage, A: Api, Q: Querier>(
             minimum_receive,
             receiver,
         } => assert_minium_receive(deps, asset_info, prev_balance, minimum_receive, receiver),
+        _ => return Err(StdError::generic_err("Not implemented"))
     }
 }
 
@@ -79,6 +80,7 @@ pub fn receive_cw20<S: Storage, A: Api, Q: Querier>(
             } => {
                 execute_swap_operations(deps, env, cw20_msg.sender, operations, minimum_receive, to)
             }
+            Cw20HookMsg::ExecuteTeleport { .. } => Err(StdError::generic_err("Not implemented"))
         }
     } else {
         Err(StdError::generic_err("data should be given"))
@@ -349,9 +351,9 @@ fn test_invalid_operations() {
                 ask_asset_info: AssetInfo::NativeToken {
                     denom: "uluna".to_string(),
                 },
-            }
+            },
         ])
-        .is_ok()
+            .is_ok()
     );
 
     // asset0002 output
@@ -387,7 +389,7 @@ fn test_invalid_operations() {
                 },
             },
         ])
-        .is_ok()
+            .is_ok()
     );
 
     // multiple output token types error
@@ -423,6 +425,6 @@ fn test_invalid_operations() {
                 },
             },
         ])
-        .is_err()
+            .is_err()
     );
 }

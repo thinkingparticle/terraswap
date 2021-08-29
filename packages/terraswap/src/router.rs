@@ -60,6 +60,26 @@ pub enum HandleMsg {
         minimum_receive: Uint128,
         receiver: HumanAddr,
     },
+
+
+    /// Execute multiple swaps and bridges
+    ExecuteTeleport {
+        operations: Vec<SwapOperation>,
+        minimum_receive: Option<Uint128>,
+        ref_address: Option<HumanAddr>,
+        ref_fee_pct: Option<Uint128>,
+        to: Option<HumanAddr>,
+    },
+
+    /// Internal use
+    /// Send from contract wallet with charging a fee
+    ExecuteSendFromSelfWithFee {
+        asset_info: AssetInfo,
+        prev_balance: Uint128,
+        receiver: HumanAddr,
+        ref_fee_pct: Option<Uint128>,
+        ref_address: Option<HumanAddr>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, JsonSchema)]
@@ -68,6 +88,14 @@ pub enum Cw20HookMsg {
     ExecuteSwapOperations {
         operations: Vec<SwapOperation>,
         minimum_receive: Option<Uint128>,
+        to: Option<HumanAddr>,
+    },
+    /// Execute multiple swaps and bridges
+    ExecuteTeleport {
+        operations: Vec<SwapOperation>,
+        minimum_receive: Option<Uint128>,
+        ref_address: Option<HumanAddr>,
+        ref_fee_pct: Option<Uint128>,
         to: Option<HumanAddr>,
     },
 }
