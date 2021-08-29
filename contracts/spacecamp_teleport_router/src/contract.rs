@@ -134,8 +134,11 @@ fn execute_send_from_self_with_fee(
     let mut fee_amount = Uint128::zero();
 
     if referral_is_active && ref_fee_pct.is_some() && ref_fee_pct.unwrap() > Uint128::zero() {
-        receiver_amount = token_amount_before_fee.multiply_ratio(ref_fee_pct.unwrap(), Uint128::new(100));
+        receiver_amount = token_amount_before_fee.multiply_ratio(Uint128::new(100) - ref_fee_pct.unwrap(), Uint128::new(100));
         fee_amount = (token_amount_before_fee - receiver_amount);
+        if fee_amount.is_zero() {
+            receiver_amount = token_amount_before_fee;
+        }
     }
 
     let asset_to_receiver = Asset {
