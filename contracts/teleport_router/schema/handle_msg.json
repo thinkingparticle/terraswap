@@ -117,6 +117,117 @@
           }
         }
       }
+    },
+    {
+      "description": "Execute multiple swaps and bridges",
+      "type": "object",
+      "required": [
+        "execute_teleport"
+      ],
+      "properties": {
+        "execute_teleport": {
+          "type": "object",
+          "required": [
+            "operations"
+          ],
+          "properties": {
+            "minimum_receive": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SwapOperation"
+              }
+            },
+            "ref_address": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/HumanAddr"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ref_fee_pct": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/HumanAddr"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "Internal use Send from contract wallet with charging a fee",
+      "type": "object",
+      "required": [
+        "execute_send_from_self_with_fee"
+      ],
+      "properties": {
+        "execute_send_from_self_with_fee": {
+          "type": "object",
+          "required": [
+            "asset_info",
+            "prev_balance",
+            "receiver"
+          ],
+          "properties": {
+            "asset_info": {
+              "$ref": "#/definitions/AssetInfo"
+            },
+            "prev_balance": {
+              "$ref": "#/definitions/Uint128"
+            },
+            "receiver": {
+              "$ref": "#/definitions/HumanAddr"
+            },
+            "ref_address": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/HumanAddr"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ref_fee_pct": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
     }
   ],
   "definitions": {

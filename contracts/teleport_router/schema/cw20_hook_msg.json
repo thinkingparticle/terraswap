@@ -43,6 +43,69 @@
           }
         }
       }
+    },
+    {
+      "description": "Execute multiple swaps and bridges",
+      "type": "object",
+      "required": [
+        "execute_teleport"
+      ],
+      "properties": {
+        "execute_teleport": {
+          "type": "object",
+          "required": [
+            "operations"
+          ],
+          "properties": {
+            "minimum_receive": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SwapOperation"
+              }
+            },
+            "ref_address": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/HumanAddr"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "ref_fee_pct": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/HumanAddr"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      }
     }
   ],
   "definitions": {
