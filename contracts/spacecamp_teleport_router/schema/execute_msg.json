@@ -113,6 +113,107 @@
         }
       },
       "additionalProperties": false
+    },
+    {
+      "description": "Execute multiple swaps and bridges",
+      "type": "object",
+      "required": [
+        "execute_teleport"
+      ],
+      "properties": {
+        "execute_teleport": {
+          "type": "object",
+          "required": [
+            "operations"
+          ],
+          "properties": {
+            "minimum_receive": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "operations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SwapOperation"
+              }
+            },
+            "ref_address": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ref_fee_pct": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "to": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "description": "Internal use Send from contract wallet with charging a fee",
+      "type": "object",
+      "required": [
+        "execute_send_or_bridge_from_self_with_fee"
+      ],
+      "properties": {
+        "execute_send_or_bridge_from_self_with_fee": {
+          "type": "object",
+          "required": [
+            "asset_info",
+            "prev_balance",
+            "receiver"
+          ],
+          "properties": {
+            "asset_info": {
+              "$ref": "#/definitions/AssetInfo"
+            },
+            "prev_balance": {
+              "$ref": "#/definitions/Uint128"
+            },
+            "receiver": {
+              "type": "string"
+            },
+            "ref_address": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ref_fee_pct": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Uint128"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false
     }
   ],
   "definitions": {
@@ -229,6 +330,76 @@
                 },
                 "offer_asset_info": {
                   "$ref": "#/definitions/AssetInfo"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "worm_hole_bridge"
+          ],
+          "properties": {
+            "worm_hole_bridge": {
+              "type": "object",
+              "required": [
+                "asset_info",
+                "wallet_address_on_target_chain"
+              ],
+              "properties": {
+                "asset_info": {
+                  "$ref": "#/definitions/AssetInfo"
+                },
+                "wallet_address_on_target_chain": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "ibc_transfer"
+          ],
+          "properties": {
+            "ibc_transfer": {
+              "type": "object",
+              "required": [
+                "asset_info",
+                "channel_id",
+                "port_id",
+                "revision_height",
+                "revision_number",
+                "wallet_address_on_target_chain"
+              ],
+              "properties": {
+                "asset_info": {
+                  "$ref": "#/definitions/AssetInfo"
+                },
+                "channel_id": {
+                  "type": "string"
+                },
+                "ics20_contract_address": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "port_id": {
+                  "type": "string"
+                },
+                "revision_height": {
+                  "$ref": "#/definitions/Uint128"
+                },
+                "revision_number": {
+                  "$ref": "#/definitions/Uint128"
+                },
+                "wallet_address_on_target_chain": {
+                  "type": "string"
                 }
               }
             }

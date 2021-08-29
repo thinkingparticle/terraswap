@@ -137,6 +137,76 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "worm_hole_bridge"
+          ],
+          "properties": {
+            "worm_hole_bridge": {
+              "type": "object",
+              "required": [
+                "asset_info",
+                "wallet_address_on_target_chain"
+              ],
+              "properties": {
+                "asset_info": {
+                  "$ref": "#/definitions/AssetInfo"
+                },
+                "wallet_address_on_target_chain": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "ibc_transfer"
+          ],
+          "properties": {
+            "ibc_transfer": {
+              "type": "object",
+              "required": [
+                "asset_info",
+                "channel_id",
+                "port_id",
+                "revision_height",
+                "revision_number",
+                "wallet_address_on_target_chain"
+              ],
+              "properties": {
+                "asset_info": {
+                  "$ref": "#/definitions/AssetInfo"
+                },
+                "channel_id": {
+                  "type": "string"
+                },
+                "ics20_contract_address": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "port_id": {
+                  "type": "string"
+                },
+                "revision_height": {
+                  "$ref": "#/definitions/Uint128"
+                },
+                "revision_number": {
+                  "$ref": "#/definitions/Uint128"
+                },
+                "wallet_address_on_target_chain": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },
