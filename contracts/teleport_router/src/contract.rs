@@ -216,7 +216,7 @@ pub fn execute_teleport_operations<S: Storage, A: Api, Q: Querier>(
 }
 
 
-static REFERRAL_PCT_MAX: u128 = 10; // set maximum referral amount
+static REFERRAL_PCT_MAX: u128 = 10000; // set maximum referral amount
 
 fn check_referral_params_valid(ref_fee_pct: &Option<Uint128>,
                                ref_address: &Option<HumanAddr>) -> StdResult<bool> {
@@ -224,13 +224,13 @@ fn check_referral_params_valid(ref_fee_pct: &Option<Uint128>,
     // todo: maybe get maximum tax cap and then check if charging a tax fails the tx?;
     let mut referral_is_valid: bool = false;
     // let ref_fee = ref_fee.unwrap();//todo: check this
-    if let Some(ref_fee) = ref_fee_pct {
+    if let Some(ref_fee_pct) = ref_fee_pct {
         if let Some(ref_address) = ref_address {
             if ref_address.is_empty() == false {
-                if ref_fee.0 > REFERRAL_PCT_MAX {
+                if ref_fee_pct.0 > REFERRAL_PCT_MAX {
                     return Err(StdError::generic_err(
                         format!("referral fee should be less than {} but received: {}",
-                                REFERRAL_PCT_MAX, ref_fee)));
+                                REFERRAL_PCT_MAX, ref_fee_pct)));
                 }
                 referral_is_valid = true;
             }
@@ -259,7 +259,7 @@ fn execute_send_from_self_with_fee<S: Storage, A: Api, Q: Querier>(
     let mut receiver_amount = token_amount_before_fee.clone();
     let mut fee_amount = Uint128::zero();
     if fee_nominator.is_zero() == false && referral_is_active == true {
-        receiver_amount = token_amount_before_fee.multiply_ratio(100u128 - fee_nominator.0, 100u128);
+        receiver_amount = token_amount_before_fee.multiply_ratio(10000u128 - fee_nominator.0, 10000u128);
         fee_amount = (token_amount_before_fee - receiver_amount).unwrap_or(Uint128::zero());
         if fee_amount.is_zero() { // if error happened when computing fee or fee is zero
             receiver_amount = token_amount_before_fee
