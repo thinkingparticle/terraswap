@@ -121,6 +121,7 @@ pub fn receive_cw20(
                 optional_addr_validate(api, to)?,
             )
         }
+        _ => Err(StdError::generic_err("Not implemented"))
     }
 }
 

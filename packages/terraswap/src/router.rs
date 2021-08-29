@@ -23,11 +23,13 @@ pub enum SwapOperation {
         ask_asset_info: AssetInfo,
     },
     // todo: maybe take these out from SwapOperation and put them in a BridgeOperation enum
-    TerraBridge {
-        asset_info: AssetInfo,
-        bridge_contract_address: String,
-        wallet_address_on_target_chain: String, //
-    },
+    // TerraBridge uses memos, and smart contracts cannot handle memos.
+    // so its not possible to integrate it into contracts.
+    // TerraBridge {
+    //     asset_info: AssetInfo,
+    //     bridge_contract_address: String,
+    //     wallet_address_on_target_chain: String, //
+    // },
     WormHoleBridge {
         // to be implemented once wormhole live and connected to terra
         asset_info: AssetInfo,
@@ -54,7 +56,7 @@ impl SwapOperation {
                 denom: ask_denom.clone(),
             },
             SwapOperation::TerraSwap { ask_asset_info, .. } => ask_asset_info.clone(),
-            SwapOperation::Bridge { asset_info, .. } => asset_info.clone()
+            _ => panic!("not implemented")
         }
     }
 }
@@ -102,7 +104,6 @@ pub enum ExecuteMsg {
         receiver: String,
         ref_fee_pct: Option<Uint128>,
         ref_address: Option<String>,
-        memo: Option<String>
     },
 }
 

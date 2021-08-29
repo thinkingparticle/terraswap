@@ -91,6 +91,7 @@ pub fn execute_swap_operation(
                 to,
             )?]
         }
+        _ => return Err(StdError::generic_err("Not implemented"))
     };
 
     Ok(Response::new().add_messages(messages))
